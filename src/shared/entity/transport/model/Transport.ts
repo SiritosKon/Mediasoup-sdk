@@ -27,12 +27,22 @@ export class TransportHandler {
   }
 
   getSendTransport(): Transport {
-    if (!this.transports) throw new Error("Transports not initialized");
+    if (!this.transports) {
+      this.signaling.send("error", {
+        error: new Error("Transports not initialized SendTransport"),
+      });
+      throw new Error("Transports not initialized");
+    }
     return this.transports.send;
   }
 
   getRecvTransport(): Transport {
-    if (!this.transports) throw new Error("Transports not initialized");
+    if (!this.transports) {
+      this.signaling.send("error", {
+        error: new Error("Transports not initialized RecvTransport"),
+      });
+      throw new Error("Transports not initialized");
+    }
     return this.transports.recv;
   }
 }

@@ -2,11 +2,15 @@ import { EventEmitter } from "../../../shared/utils/EventEmitter";
 import { Signaling } from "../../../entities/signaling/model/Signaling";
 import { AsyncQueue } from "../../../shared/utils/AsyncQueue";
 import { Call } from "../../../entities/call/model/Call";
-import type { VideoCallEvents, VideoCallMessage } from "../types";
-import { CallParticipant } from "../../../entities/call/model/CallParticipant";
+import {
+  type VideoCallEvents,
+  type VideoCallProducerAddedMessage,
+  type VideoCallProducerRemovedMessage,
+  type VideoCallRequestProducersMessage,
+} from "../types";
 
 export class VideoCallClient extends EventEmitter<VideoCallEvents> {
-  private signaling: Signaling;
+  public readonly signaling: Signaling;
   private calls = new Map<string, Call>();
   private queue = new AsyncQueue();
   private localUserId: string | null = null;
@@ -19,31 +23,37 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
 
   private setupSignalingHandlers(): void {
     this.signaling.on("error", (error) => this.emit("error", error));
-    this.signaling.on("connected", () => this.emit("connected"));
+    this.signaling.on("connected", () => {
+      this.emit("connected");
+    });
 
     this.signaling.on("message", (event, payload) => {
-      // // Обработка событий участников
-      // if (event === "participantJoined") {
-      //   this.handleParticipantJoined(payload);
-      // } else if (event === "participantLeft") {
-      //   this.handleParticipantLeft(
-      //     payload as { roomId: string; userId: string }
-      //   );
-      // }
-      // // Обработка событий медиа
-      // else if (event === "producerAdded") {
-      //   this.handleProducerAdded(
-      //     payload as { producerId: string; kind: "audio" | "video" }
-      //   );
-      // } else if (event === "producerRemoved") {
-      //   this.handleProducerRemoved(payload as { producerId: string });
-      // } else if (event === "consumerAdded") {
-      //   this.handleConsumerAdded(
-      //     payload as { consumerId: string; kind: "audio" | "video" }
-      //   );
-      // } else if (event === "consumerRemoved") {
-      //   this.handleConsumerRemoved(payload as { consumerId: string });
-      // }
+      // Обработка подключения участников
+      if (event === "joined") {
+        this.handleParticipantJoined(
+          payload as { roomId: string; userId: string }
+        );
+      } else if (event === "leave") {
+        this.handleParticipantLeft(
+          payload as { roomId: string; userId: string }
+        );
+      }
+      // Обработка запроса продюсеров
+      else if (event === "requestProducers") {
+        this.handleRequestProducers(
+          payload as VideoCallRequestProducersMessage["payload"]
+        );
+      }
+      // Обработка медиа-событий
+      else if (event === "producerAdded") {
+        this.handleProducerAdded(
+          payload as VideoCallProducerAddedMessage["payload"]
+        );
+      } else if (event === "producerRemoved") {
+        this.handleProducerRemoved(
+          payload as VideoCallProducerRemovedMessage["payload"]
+        );
+      }
 
       // Пробрасываем все события наверх
       this.emit(event as keyof VideoCallEvents, {
@@ -63,10 +73,16 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
 
     // Если это не локальный пользователь
     if (userId !== this.localUserId) {
-      const localParticipant = call.getParticipant(this.localUserId!);
-      if (localParticipant) {
-        await this.subscribeToNewParticipant(localParticipant, userId, call);
-      }
+      // Создаем нового участника
+      call.addParticipant(userId, this.signaling, {
+        isLocal: false,
+      });
+
+      // Запрашиваем медиа-потоки нового участника
+      this.signaling.send("requestProducers", {
+        roomId,
+        userId,
+      });
     }
   }
 
@@ -78,90 +94,94 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
     const call = this.calls.get(roomId);
     if (!call) return;
 
-    const participant = call.getParticipant(userId);
-    if (participant) {
-      await this.unsubscribeFromParticipant(participant);
+    // Удаляем участника из звонка
+    call.removeParticipant(userId);
+  }
+
+  private async handleRequestProducers(
+    payload: VideoCallRequestProducersMessage["payload"]
+  ): Promise<void> {
+    const { roomId, userId } = payload;
+    const call = this.calls.get(roomId);
+    if (!call) return;
+
+    // Если это запрос от другого пользователя к нам
+    if (userId === this.localUserId) {
+      const localParticipant = call.getParticipant(this.localUserId!);
+      if (localParticipant) {
+        // Отправляем информацию о всех наших продюсерах
+        for (const producer of localParticipant.getProducers()) {
+          this.signaling.send("producerAdded", {
+            producerId: producer.id,
+            kind: producer.kind,
+            userId: this.localUserId,
+            roomId,
+          });
+        }
+      }
     }
   }
 
-  // private async handleProducerAdded(payload: {
-  //   producerId: string;
-  //   kind: "audio" | "video";
-  // }): Promise<void> {
-  //   const { producerId, kind } = payload;
+  private async handleProducerAdded(
+    payload: VideoCallProducerAddedMessage["payload"]
+  ): Promise<void> {
+    const { roomId, userId, producerId, kind } = payload;
+    const call = this.calls.get(roomId);
+    if (!call) return;
 
-  //   // Находим все активные звонки
-  //   for (const call of this.calls.values()) {
-  //     // Для каждого локального участника в звонке
-  //     const localParticipant = call.getParticipant(this.localUserId!);
-  //     if (localParticipant) {
-  //       // Подписываемся на нового продюсера
-  //       await localParticipant.addConsumer(producerId, kind);
-  //     }
-  //   }
-  // }
+    // Если это не локальный пользователь добавил продюсер
+    if (userId !== this.localUserId) {
+      const localParticipant = call.getParticipant(this.localUserId!);
+      if (localParticipant) {
+        try {
+          // Создаем консьюмер для этого продюсера
+          const consumer = await localParticipant.addConsumer(producerId, kind);
 
-  // private async handleProducerRemoved(payload: {
-  //   producerId: string;
-  // }): Promise<void> {
-  //   const { producerId } = payload;
-
-  //   // Находим все активные звонки
-  //   for (const call of this.calls.values()) {
-  //     const localParticipant = call.getParticipant(this.localUserId!);
-  //     if (localParticipant) {
-  //       // Находим и удаляем консьюмер для этого продюсера
-  //       const consumer = localParticipant.getConsumerByProducerId(producerId);
-  //       if (consumer) {
-  //         localParticipant.removeConsumer(consumer.id);
-  //       }
-  //     }
-  //   }
-  // }
-
-  private handleConsumerAdded(payload: {
-    consumerId: string;
-    kind: "audio" | "video";
-  }): void {
-    // Здесь можно добавить логику для обработки добавления консьюмера
-    // Например, обновление UI или логирование
+          // Отправляем информацию о созданном консьюмере
+          this.signaling.send("consumerAdded", {
+            roomId,
+            userId: this.localUserId,
+            consumerId: consumer.id,
+            kind,
+          });
+        } catch (error) {
+          this.emit("error", error as Error);
+        }
+      }
+    }
   }
 
-  private handleConsumerRemoved(payload: { consumerId: string }): void {
-    // Здесь можно добавить логику для обработки удаления консьюмера
-    // Например, обновление UI или логирование
+  private async handleProducerRemoved(
+    payload: VideoCallProducerRemovedMessage["payload"]
+  ): Promise<void> {
+    const { roomId, userId, producerId } = payload;
+    const call = this.calls.get(roomId);
+    if (!call) return;
+
+    // Обрабатываем только удаление продюсеров от других пользователей
+    if (userId !== this.localUserId) {
+      const localParticipant = call.getParticipant(this.localUserId!);
+      if (!localParticipant) return;
+
+      try {
+        const consumer = localParticipant.getConsumerByProducerId(producerId);
+        if (!consumer) return;
+
+        // Удаляем консьюмер
+        localParticipant.removeConsumer(consumer.id);
+
+        // Уведомляем других участников об удалении консьюмера
+        this.signaling.send("consumerRemoved", {
+          roomId,
+          userId: this.localUserId,
+          consumerId: consumer.id,
+        });
+      } catch (error) {
+        this.emit("error", error as Error);
+      }
+    }
   }
 
-  // private async subscribeToNewParticipant(
-  //   localParticipant: CallParticipant,
-  //   newUserId: string,
-  //   call: Call
-  // ): Promise<void> {
-  //   try {
-  //     const newParticipant = call.getParticipant(newUserId);
-  //     if (!newParticipant) return;
-
-  //     // Подписываемся на все продюсеры нового участника
-  //     for (const producer of newParticipant.getProducers()) {
-  //       await localParticipant.addConsumer(producer.id, producer.kind);
-  //     }
-  //   } catch (error) {
-  //     this.emit("error", error as Error);
-  //   }
-  // }
-
-  // private async unsubscribeFromParticipant(
-  //   participant: CallParticipant
-  // ): Promise<void> {
-  //   try {
-  //     // Закрываем все консьюмеры этого участника
-  //     for (const consumer of participant.getConsumers()) {
-  //       participant.removeConsumer(consumer.id);
-  //     }
-  //   } catch (error) {
-  //     this.emit("error", error as Error);
-  //   }
-  // }
   createCall(): Call {
     const call = new Call();
     this.calls.set(call.id, call);
@@ -181,20 +201,25 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
         return;
       }
 
-      // Сохраняем ID локального пользователя
-      this.localUserId = userId;
+      try {
+        this.localUserId = userId;
 
-      const participant = call.addParticipant(userId, {
-        isLocal: true,
-        signaling: this.signaling,
-      });
+        const participant = call.addParticipant(userId, this.signaling, {
+          isLocal: true,
+        });
 
-      // Для локального пользователя создаем продюсеры
-      if (participant.isLocal) {
-        await this.setupLocalParticipantMedia(participant);
+        if (participant.isLocal) {
+          await participant.setupLocalParticipantMedia();
+        }
+
+        this.signaling.send("joined", { roomId, userId });
+        this.emit("joined", {
+          type: "joined",
+          payload: { roomId, userId },
+        });
+      } catch (error) {
+        this.emit("error", error as Error);
       }
-
-      this.signaling.send("joined", { roomId, userId });
     });
   }
 
@@ -219,19 +244,7 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
     return Array.from(this.calls.values());
   }
 
-  private async setupLocalParticipantMedia(
-    participant: CallParticipant
-  ): Promise<void> {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-
-      await participant.addProducer("audio", stream.getAudioTracks()[0]);
-      await participant.addProducer("video", stream.getVideoTracks()[0]);
-    } catch (error) {
-      this.emit("error", error as Error);
-    }
+  getSignaling(): Signaling {
+    return this.signaling;
   }
 }

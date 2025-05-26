@@ -10,13 +10,7 @@ export const mockRtpCapabilities: RtpCapabilities = {
       rtcpFeedback: [],
     },
   ],
-  headerExtensions: [
-    {
-      uri: "urn:ietf:params:rtp-hdrext:sdes:mid",
-
-      encrypt: false,
-    },
-  ],
+  headerExtensions: [],
 };
 
 export const mockTransportParams = {

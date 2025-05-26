@@ -1,8 +1,6 @@
-import { EventEmitter } from "../../../shared/utils/EventEmitter";
-import type { ConnectionStatus } from "../../../shared/types";
 import type { CallParticipantOptions } from "../types/call-participant";
 import { Signaling } from "../../signaling/model/Signaling";
-import type { CallParticipantEvents } from "../types/call-participant";
+
 import { Producer } from "mediasoup-client/lib/Producer";
 import { Consumer } from "mediasoup-client/lib/Consumer";
 import { Transport } from "mediasoup-client/lib/Transport";
@@ -11,8 +9,7 @@ import { User } from "../../user/model/User";
 
 export class CallParticipant extends User {
   private _isLocal: boolean;
-  private _connectionStatus: ConnectionStatus;
-  private _isSpeaking: boolean;
+
   private transportHandler: TransportHandler;
   private producers: Map<string, Producer> = new Map();
   private consumers: Map<string, Consumer> = new Map();
@@ -21,11 +18,10 @@ export class CallParticipant extends User {
   constructor(options: CallParticipantOptions) {
     super(options);
     this._isLocal = options.isLocal ?? false;
-    this._connectionStatus = options.connectionStatus ?? "connecting";
-    this._isSpeaking = options.isSpeaking ?? false;
 
     // Инициализируем TransportHandler
     this.transportHandler = new TransportHandler(options.signaling);
+    this.signaling = options.signaling;
 
     // Настраиваем обработчики событий транспорта
     this.setupTransportHandlers();
@@ -120,6 +116,20 @@ export class CallParticipant extends User {
     return consumer;
   }
 
+  async setupLocalParticipantMedia() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+
+      await this.addProducer("audio", stream.getAudioTracks()[0]);
+      await this.addProducer("video", stream.getVideoTracks()[0]);
+    } catch (error) {
+      this.signaling.send("error", error as Error);
+    }
+  }
+
   removeProducer(producerId: string): void {
     const producer = this.producers.get(producerId);
     if (producer) {
@@ -138,25 +148,50 @@ export class CallParticipant extends User {
     }
   }
 
+  // Получение всех продюсеров
+  getProducers(): Producer[] {
+    return Array.from(this.producers.values());
+  }
+
+  // Получение всех консьюмеров
+  getConsumers(): Consumer[] {
+    return Array.from(this.consumers.values());
+  }
+
+  // Поиск консьюмера по ID продюсера
+  getConsumerByProducerId(producerId: string): Consumer | undefined {
+    return Array.from(this.consumers.values()).find(
+      (consumer) => consumer.producerId === producerId
+    );
+  }
+
+  // Получение продюсера по ID
+  getProducer(producerId: string): Producer | undefined {
+    return this.producers.get(producerId);
+  }
+
+  // Получение консьюмера по ID
+  getConsumer(consumerId: string): Consumer | undefined {
+    return this.consumers.get(consumerId);
+  }
+
+  // Получение всех продюсеров определенного типа
+  getProducersByKind(kind: "audio" | "video"): Producer[] {
+    return Array.from(this.producers.values()).filter(
+      (producer) => producer.kind === kind
+    );
+  }
+
+  // Получение всех консьюмеров определенного типа
+  getConsumersByKind(kind: "audio" | "video"): Consumer[] {
+    return Array.from(this.consumers.values()).filter(
+      (consumer) => consumer.kind === kind
+    );
+  }
+
   // Существующие геттеры и сеттеры
   get isLocal(): boolean {
     return this._isLocal;
-  }
-
-  get connectionStatus(): ConnectionStatus {
-    return this._connectionStatus;
-  }
-
-  get isSpeaking(): boolean {
-    return this._isSpeaking;
-  }
-
-  setConnectionStatus(status: ConnectionStatus): void {
-    this._connectionStatus = status;
-  }
-
-  setIsSpeaking(isSpeaking: boolean): void {
-    this._isSpeaking = isSpeaking;
   }
 
   // Методы для работы с транспортами

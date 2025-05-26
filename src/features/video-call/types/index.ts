@@ -1,4 +1,17 @@
-type VideoCallMessageType = "joined" | "leave" | "participantJoined" | string;
+import { MediaType } from "../../../shared/types/media-types";
+
+type VideoCallMessageType =
+  | "joined"
+  | "leave"
+  | "participantJoined"
+  | "participantLeft"
+  | "producerAdded"
+  | "producerRemoved"
+  | "consumerAdded"
+  | "consumerRemoved"
+  | "transportConnected"
+  | "transportDisconnected"
+  | string;
 
 type VideoCallPayload<T extends VideoCallMessageType, K = unknown> = {
   type: T;
@@ -31,6 +44,49 @@ export type VideoCallLeaveMessage = VideoCallPayload<
 
 export type VideoCallError = VideoCallPayload<"error", { error: Error }>;
 
+export type VideoCallProducerAddedMessage = VideoCallPayload<
+  "producerAdded",
+  {
+    roomId: string;
+    userId: string;
+    producerId: string;
+    kind: MediaType;
+  }
+>;
+
+export type VideoCallProducerRemovedMessage = VideoCallPayload<
+  "producerRemoved",
+  {
+    roomId: string;
+    userId: string;
+    producerId: string;
+  }
+>;
+
+export type VideoCallConsumerAddedMessage = VideoCallPayload<
+  "consumerAdded",
+  {
+    roomId: string;
+    userId: string;
+    consumerId: string;
+    kind: MediaType;
+  }
+>;
+
+export type VideoCallConsumerRemovedMessage = VideoCallPayload<
+  "consumerRemoved",
+  {
+    roomId: string;
+    userId: string;
+    consumerId: string;
+  }
+>;
+
+export type VideoCallRequestProducersMessage = VideoCallPayload<
+  "requestProducers",
+  VideoCallConnectionPayload
+>;
+
 export type VideoCallEvents = {
   connected: () => void;
   joined: (message: VideoCallJoinedMessage) => void;
@@ -38,4 +94,9 @@ export type VideoCallEvents = {
   created: (message: VideoCallCreateMessage) => void;
   error: (error: Error) => void;
   message: (message: VideoCallMessage) => void;
+  producerAdded: (message: VideoCallProducerAddedMessage) => void;
+  producerRemoved: (message: VideoCallProducerRemovedMessage) => void;
+  consumerAdded: (message: VideoCallConsumerAddedMessage) => void;
+  consumerRemoved: (message: VideoCallConsumerRemovedMessage) => void;
+  requestProducers: (message: VideoCallRequestProducersMessage) => void;
 };
