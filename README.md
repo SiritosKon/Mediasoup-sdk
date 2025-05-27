@@ -108,10 +108,6 @@ npm install
 npm test
 ```
 
-## Лицензия
-
-MIT
-
 ## Автор
 
 [SiritosKon](https://github.com/SiritosKon)
