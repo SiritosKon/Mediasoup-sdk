@@ -63,6 +63,14 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
     });
   }
 
+  /**
+   * Обработка события присоединения участника к звонку
+   * Мы проверяем что добавились не наш пользователь
+   * Если это не наш пользователь, то мы добавляем его в звонок
+   * И запрашиваем у него медиа-потоки
+   *
+   * @param payload - данные о присоединении участника к звонку
+   */
   private async handleParticipantJoined(payload: {
     roomId: string;
     userId: string;
@@ -98,6 +106,14 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
     call.removeParticipant(userId);
   }
 
+  /**
+   * Обработка запроса продюсеров
+   * Мы отправляем информацию о всех наших продюсерах, чтобы другие пользователи могли подключиться к нам
+   * если это запрос от другого пользователя к нам
+   * если это запрос не к нам то ничего не делаем
+   *
+   * @param payload - данные о запросе продюсеров
+   */
   private async handleRequestProducers(
     payload: VideoCallRequestProducersMessage["payload"]
   ): Promise<void> {
@@ -122,6 +138,14 @@ export class VideoCallClient extends EventEmitter<VideoCallEvents> {
     }
   }
 
+  /**
+   * Обработка добавления продюсера
+   * Мы добавляем консьюмер для этого продюсера
+   * И отправляем информацию о созданном консьюмере
+   * все это работает только если это не локальный пользователь
+   *
+   * @param payload - данные о добавлении продюсера
+   */
   private async handleProducerAdded(
     payload: VideoCallProducerAddedMessage["payload"]
   ): Promise<void> {
